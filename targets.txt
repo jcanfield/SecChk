@@ -1,0 +1,7 @@
+# secchk targets.txt example
+# One host per line — IP addresses or URLs accepted by nuclei
+# Remove the .example extension and edit before use
+https://creativeboulder.com
+https://www.creativeboulder.com
+149.28.250.17
+64.7.221.237

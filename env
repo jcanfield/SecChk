@@ -1,0 +1,22 @@
+# secchk environment file
+# Edit these values, then save. Never commit this file.
+
+# --- Targets ----------------------------------------------------------------
+DEFAULT_HOST="http://localhost"
+DEFAULT_WIN11_IP="192.168.1.100"
+DEFAULT_NETWORK_RANGE="192.168.1.0/24"
+
+# --- Nuclei -----------------------------------------------------------------
+NUCLEI_TEMPLATES_DIR=""
+NUCLEI_OUTPUT_DIR="./results"
+NUCLEI_RATE_LIMIT="150"
+NUCLEI_CONCURRENCY="25"
+
+# --- API Keys ---------------------------------------------------------------
+SHODAN_API_KEY=""
+VIRUSTOTAL_API_KEY=""
+SECURITYTRAILS_API_KEY=""
+
+# --- Notifications ----------------------------------------------------------
+SLACK_WEBHOOK_URL=""
+EMAIL_RECIPIENT=""

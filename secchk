@@ -1,0 +1,593 @@
+#!/usr/bin/env bash
+# secchk - Security Check Tool v0.2
+# ---------------------------------------------------------------------------
+# Load .env
+# ---------------------------------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ENV_FILE="${SCRIPT_DIR}/.env"
+if [[ -f "$ENV_FILE" ]]; then set -a; source "$ENV_FILE"; set +a; fi
+
+DEFAULT_HOST="${DEFAULT_HOST:-http://localhost}"
+DEFAULT_WIN11_IP="${DEFAULT_WIN11_IP:-192.168.1.100}"
+DEFAULT_NETWORK_RANGE="${DEFAULT_NETWORK_RANGE:-192.168.1.0/24}"
+NUCLEI_OUTPUT_DIR="${NUCLEI_OUTPUT_DIR:-./results}"
+NUCLEI_RATE_LIMIT="${NUCLEI_RATE_LIMIT:-150}"
+NUCLEI_CONCURRENCY="${NUCLEI_CONCURRENCY:-25}"
+
+# ---------------------------------------------------------------------------
+# Colors  (change the trailing number to swap accent:
+#   31=red  32=green  33=yellow  34=blue  35=magenta  36=teal)
+# ---------------------------------------------------------------------------
+R="$(printf '\033[1;31m')"
+G="$(printf '\033[1;32m')"
+Y="$(printf '\033[1;33m')"
+B="$(printf '\033[1;34m')"
+C="$(printf '\033[1;34m')"   # accent — currently bright blue
+W="$(printf '\033[1;37m')"
+DIM="$(printf '\033[2m')"
+RST="$(printf '\033[0m')"
+
+# Dark Blue
+C="$(printf '\033[0;34m')"   # dark blue
+C="$(printf '\033[1;34m')"   # bright blue (bolder)
+
+# Dark Red
+C="$(printf '\033[0;31m')"   # dark red
+C="$(printf '\033[1;31m')"   # bright red (bolder)
+
+# ---------------------------------------------------------------------------
+# Utility functions  — all defined at GLOBAL scope
+# ---------------------------------------------------------------------------
+info()    { printf "  %s[INFO]%s  %s\n" "$C" "$RST" "$*"; }
+ok()      { printf "  %s[ OK ]%s  %s\n" "$G" "$RST" "$*"; }
+warn()    { printf "  %s[WARN]%s  %s\n" "$Y" "$RST" "$*"; }
+sep()     { printf "  %s────────────────────────────────────────────────%s\n" "$DIM" "$RST"; }
+heading() { printf "\n  %s%s%s\n" "$W" "$*" "$RST"; sep; }
+pause() {
+    printf "\n  %sPress Enter to return to menu...%s" "$DIM" "$RST" >/dev/tty
+    read -r </dev/tty
+}
+
+setup_scroll() {
+    clear
+    _draw_banner
+}
+
+teardown_scroll() {
+    pause
+    clear
+    main_menu  # force return to menu if loop doesn't catch it
+    exit 0
+}
+ask() {
+    local label="$1" default="$2"
+    # Print prompt below the heading, inside the scroll region
+    printf "  %s%s%s [%s%s%s]: " "$C" "$label" "$RST" "$DIM" "$default" "$RST" >/dev/tty
+    read -r _ans </dev/tty
+    printf "%s" "${_ans:-$default}"
+}
+
+confirm() {
+    printf "  %s%s [y/N]%s " "$Y" "$1" "$RST" >/dev/tty
+    read -r _c </dev/tty
+    [[ "$_c" =~ ^[Yy]$ ]]
+}
+
+need() {
+    if ! command -v "$1" >/dev/null 2>&1; then
+        warn "'$1' not found in PATH."
+        confirm "Continue anyway?" || return 1
+    fi
+    return 0
+}
+
+mk_outdir() { mkdir -p "$NUCLEI_OUTPUT_DIR"; }
+
+# ---------------------------------------------------------------------------
+# Sticky header helpers
+# ---------------------------------------------------------------------------
+# Number of lines _draw_banner outputs — update if you change the banner
+BANNER_ROWS=14
+
+_draw_banner() {
+    printf "%s" "$C"
+    printf "  ███████╗███████╗ ██████╗ ██████╗██╗  ██╗██╗  ██╗\n"
+    printf "  ██╔════╝██╔════╝██╔════╝██╔════╝██║  ██║██║ ██╔╝\n"
+    printf "  ███████╗█████╗  ██║     ██║     ███████║█████╔╝ \n"
+    printf "  ╚════██║██╔══╝  ██║     ██║     ██╔══██║██╔═██╗ \n"
+    printf "  ███████║███████╗╚██████╗╚██████╗██║  ██║██║  ██╗\n"
+    printf "  ╚══════╝╚══════╝ ╚═════╝ ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝\n"
+    printf "%s\n" "$RST"
+    printf "  %sSecurity Check Tool  v0.2%s\n" "$W" "$RST"
+    printf "  %s────────────────────────────────────────────────%s\n" "$DIM" "$RST"
+    printf "  %sHost : %s%s%s\n" "$DIM" "$C" "$DEFAULT_HOST" "$RST"
+    printf "  %sWin11: %s%s%s\n" "$DIM" "$C" "$DEFAULT_WIN11_IP" "$RST"
+    printf "  %sOut  : %s%s%s\n" "$DIM" "$C" "$NUCLEI_OUTPUT_DIR" "$RST"
+    printf "  %s================================================%s\n\n" "$C" "$RST"
+}
+
+# Full-screen banner (used by main menu)
+print_banner() { clear; _draw_banner; }
+
+# Pin banner to top, scroll output below it during a scan
+#setup_scroll() {
+#    local rows; rows="$(tput lines 2>/dev/null || echo 40)"
+#    clear
+#    _draw_banner
+#    tput csr "$BANNER_ROWS" "$(( rows - 1 ))" 2>/dev/null || true
+#    tput cup "$BANNER_ROWS" 0 2>/dev/null || true
+#}
+
+## Using teardown_scroll() below pause() function
+
+#teardown_scroll() {
+#    local rows; rows="$(tput lines 2>/dev/null || echo 40)"
+#    tput csr 0 "$(( rows - 1 ))" 2>/dev/null || true
+#    tput cup 0 0 2>/dev/null || true   # ← move cursor to top-left before pause
+#    pause
+#    # main_menu's while loop calls print_banner which does clear + redraw
+#}
+
+# ---------------------------------------------------------------------------
+# Nuclei wrapper
+# ---------------------------------------------------------------------------
+run_nuclei() {
+    need nuclei || return 1
+    mk_outdir
+    local ts outfile
+    ts="$(date +%Y%m%d-%H%M%S)"
+    outfile="${NUCLEI_OUTPUT_DIR}/${ts}-nuclei.txt"
+    printf "  %s» nuclei %s -rate-limit %s -c %s%s\n\n" \
+        "$DIM" "$*" "$NUCLEI_RATE_LIMIT" "$NUCLEI_CONCURRENCY" "$RST"
+
+    # -v = verbose, -stats = live stats bar, tee writes to screen AND file
+    nuclei "$@" \
+        -rate-limit "$NUCLEI_RATE_LIMIT" \
+        -c          "$NUCLEI_CONCURRENCY" \
+        -v \
+        -stats \
+        2>&1 | tee "$outfile" | while IFS= read -r line; do
+        case "${line,,}" in
+            *"[critical]"*) printf "  %s%s%s\n" "$R"   "$line" "$RST" ;;
+            *"[high]"*)     printf "  %s%s%s\n" "$Y"   "$line" "$RST" ;;
+            *"[medium]"*)   printf "  %s%s%s\n" "$C"   "$line" "$RST" ;;
+            *"[low]"*)      printf "  %s%s%s\n" "$DIM" "$line" "$RST" ;;
+            *"[inf]"*)      printf "  %s%s%s\n" "$DIM" "$line" "$RST" ;;
+            *"[err]"*)      printf "  %s%s%s\n" "$Y"   "$line" "$RST" ;;
+            *"[ftl]"*)      printf "  %s%s%s\n" "$R"   "$line" "$RST" ;;
+            *)              printf "  %s\n"             "$line"        ;;
+        esac
+    done
+
+    printf "\n"
+    ok "Log saved to $outfile"
+}
+
+# ---------------------------------------------------------------------------
+# Nuclei scan functions
+# ---------------------------------------------------------------------------
+do_scan1() {
+    setup_scroll
+    heading "Scan 1 — Basic CVE Scan"
+    local h; h="$(ask "Target host" "$DEFAULT_HOST")"
+    info "Running CVE templates against $h"
+    run_nuclei -u "$h" -t cves/
+    teardown_scroll
+}
+
+do_scan2() {
+    setup_scroll
+    heading "Scan 2 — Critical / High Severity"
+    local h; h="$(ask "Target host" "$DEFAULT_HOST")"
+    info "Scanning $h — severity: critical, high"
+    run_nuclei -u "$h" -severity critical,high
+    teardown_scroll
+}
+
+do_scan3() {
+    setup_scroll
+    heading "Scan 3 — Network Range (targets.txt)"
+    local f; f="$(ask "Targets file" "./targets.txt")"
+    if [[ ! -f "$f" ]]; then
+        warn "File not found: $f"
+        if need nmap; then
+            info "Discovering hosts on $DEFAULT_NETWORK_RANGE ..."
+            nmap -sn "$DEFAULT_NETWORK_RANGE" -oG - 2>/dev/null \
+                | awk '/Up$/{print $2}' > "$f"
+            ok "Wrote $(wc -l < "$f") hosts to $f"
+        fi
+    fi
+    run_nuclei -l "$f" -t cves/ -severity critical,high,medium
+    teardown_scroll
+}
+
+do_scan4() {
+    setup_scroll
+    heading "Scan 4 — Linux / Infrastructure Full Scan"
+    local h; h="$(ask "Target host" "$DEFAULT_HOST")"
+    info "Templates: network/ exposures/ misconfiguration/ cves/"
+    run_nuclei -u "$h" -t network/ -t exposures/ -t misconfiguration/ -t cves/
+    teardown_scroll
+}
+
+do_scan5() {
+    setup_scroll
+    heading "Scan 5 — Windows 11 (SMB / RPC / Web)"
+    local h; h="$(ask "Win11 IP" "$DEFAULT_WIN11_IP")"
+    info "Templates: network/smb/ cves/ misconfiguration/"
+    run_nuclei -u "$h" -t network/smb/ -t cves/ -t misconfiguration/
+    teardown_scroll
+}
+
+do_scan6() {
+    setup_scroll
+    heading "Scan 6 — Full Audit to File"
+    local f; f="$(ask "Targets file" "./targets.txt")"
+    if [[ ! -f "$f" ]]; then
+        warn "File not found: $f"
+        confirm "Create with one host?" || { teardown_scroll; return 1; }
+        local h; h="$(ask "Host" "$DEFAULT_HOST")"
+        printf "%s\n" "$h" > "$f"
+        ok "Created $f"
+    fi
+    local out="${NUCLEI_OUTPUT_DIR}/audit-$(date +%Y%m%d-%H%M%S).txt"
+    mk_outdir
+    info "Output: $out"
+    run_nuclei -l "$f" -t cves/ -t misconfiguration/ -t default-logins/ \
+        -severity critical,high -o "$out"
+    teardown_scroll
+}
+
+# ---------------------------------------------------------------------------
+# Netcat port scanning
+# ---------------------------------------------------------------------------
+do_nc_common() {
+    setup_scroll
+    heading "Port Scan — Common Ports"
+    need nc || { teardown_scroll; return 1; }
+    local h; h="$(ask "Target host" "$DEFAULT_HOST")"
+    h="${h#http://}"; h="${h#https://}"
+    local -a PORTS=(21 22 23 25 53 80 110 111 143 443 445
+                    3306 3389 5432 5900 6379 8080 8443 27017)
+    printf "\n  %-8s %-18s %s\n" "PORT" "SERVICE" "STATUS"
+    sep
+    for p in "${PORTS[@]}"; do
+        local svc
+        svc="$(getent services "${p}/tcp" 2>/dev/null | awk '{print $1}')"
+        svc="${svc:-?}"
+        if nc -z -w 1 "$h" "$p" 2>/dev/null; then
+            printf "  %s%-8s %-18s OPEN%s\n"   "$G"   "$p" "$svc" "$RST"
+        else
+            printf "  %s%-8s %-18s closed%s\n" "$DIM" "$p" "$svc" "$RST"
+        fi
+    done
+    printf "\n"
+    ok "Scan complete — $h"
+    teardown_scroll
+}
+
+do_nc_range() {
+    setup_scroll
+    heading "Port Scan — Custom Range"
+    need nc || { teardown_scroll; return 1; }
+    local h; h="$(ask "Target host" "$DEFAULT_HOST")"
+    h="${h#http://}"; h="${h#https://}"
+    local s; s="$(ask "Start port" "1")"
+    local e; e="$(ask "End port" "1024")"
+    info "Scanning $h ports $s to $e ..."
+    local found=0
+    for (( p=s; p<=e; p++ )); do
+        if nc -z -w 1 "$h" "$p" 2>/dev/null; then
+            local svc
+            svc="$(getent services "${p}/tcp" 2>/dev/null | awk '{print $1}')"
+            svc="${svc:-?}"
+            printf "  %s%-8s %-18s OPEN%s\n" "$G" "$p" "$svc" "$RST"
+            found=$(( found + 1 ))
+        fi
+    done
+    printf "\n"
+    ok "Found $found open port(s) on $h"
+    teardown_scroll
+}
+
+do_nc_banner() {
+    setup_scroll
+    heading "Banner Grab"
+    need nc || { teardown_scroll; return 1; }
+    local h; h="$(ask "Target host" "$DEFAULT_HOST")"
+    h="${h#http://}"; h="${h#https://}"
+    local p; p="$(ask "Port" "80")"
+    info "Grabbing banner from $h:$p ..."
+    printf "\n"
+    printf "HEAD / HTTP/1.0\r\n\r\n" \
+        | nc -w 3 "$h" "$p" 2>/dev/null \
+        | head -20 \
+        | while IFS= read -r line; do
+            printf "  %s%s%s\n" "$C" "$line" "$RST"
+        done
+    printf "\n"
+    ok "Done"
+    teardown_scroll
+}
+
+# ---------------------------------------------------------------------------
+# Additional tools
+# ---------------------------------------------------------------------------
+do_whois() {
+    setup_scroll
+    heading "WHOIS Lookup"
+    need whois || { teardown_scroll; return 1; }
+    local t; t="$(ask "Domain / IP" "$DEFAULT_HOST")"
+    t="${t#http://}"; t="${t#https://}"
+    printf "\n"
+    whois "$t" 2>/dev/null | head -50 \
+        | while IFS= read -r line; do
+            printf "  %s%s%s\n" "$DIM" "$line" "$RST"
+        done
+    teardown_scroll
+}
+
+do_dns() {
+    setup_scroll
+    heading "DNS Enumeration"
+    local t; t="$(ask "Domain" "$DEFAULT_HOST")"
+    t="${t#http://}"; t="${t#https://}"
+    printf "\n"
+    for rtype in A AAAA MX NS TXT SOA CNAME; do
+        local r; r="$(dig +short "$t" "$rtype" 2>/dev/null)"
+        [[ -n "$r" ]] && printf "  %s%-8s%s  %s\n" "$B" "$rtype" "$RST" "$r"
+    done
+    printf "\n"
+    ok "DNS enumeration complete"
+    teardown_scroll
+}
+
+do_ssl() {
+    setup_scroll
+    heading "SSL/TLS Certificate Check"
+    need openssl || { teardown_scroll; return 1; }
+    local h; h="$(ask "Hostname (no https://)" "$DEFAULT_HOST")"
+    h="${h#http://}"; h="${h#https://}"
+    local p; p="$(ask "Port" "443")"
+    printf "\n"
+    echo "" \
+        | openssl s_client -connect "${h}:${p}" -servername "$h" 2>/dev/null \
+        | openssl x509 -noout -text 2>/dev/null \
+        | grep -E "(Subject:|Issuer:|Not Before|Not After|DNS:)" \
+        | while IFS= read -r line; do
+            printf "  %s%s%s\n" "$C" "$line" "$RST"
+        done
+    printf "\n"
+    ok "TLS check complete"
+    teardown_scroll
+}
+
+do_sysinfo() {
+    setup_scroll
+    heading "System Information"
+
+    # Linux logo (optional — skip gracefully if not installed)
+    if command -v linuxlogo >/dev/null 2>&1; then
+        linuxlogo
+        printf "\n"
+    fi
+
+    # Kernel + distro
+    printf "  %s%s%s\n\n" "$DIM" "$(uname -a)" "$RST"
+
+    if command -v lsb_release >/dev/null 2>&1; then
+        lsb_release -a 2>/dev/null | while IFS= read -r line; do
+            printf "  %s%s%s\n" "$DIM" "$line" "$RST"
+        done
+        printf "\n"
+    fi
+
+    # Language / tool versions
+    for cmd in "python3 --version" "pip --version" "docker --version" "node --version" "npm --version"; do
+        local bin="${cmd%% *}"
+        if command -v "$bin" >/dev/null 2>&1; then
+            local ver; ver="$(eval "$cmd" 2>/dev/null)"
+            printf "  %s%-10s%s %s\n" "$C" "$bin" "$RST" "$ver"
+        fi
+    done
+    printf "\n"
+
+    # Memory
+    printf "  %sMemory Usage%s\n" "$W" "$RST"; sep
+    free -h | while IFS= read -r line; do
+        printf "  %s%s%s\n" "$DIM" "$line" "$RST"
+    done
+    printf "\n"
+
+    # Uptime
+    printf "  %sSystem Uptime%s\n" "$W" "$RST"; sep
+    local now up users load1 load5
+    now="$(date '+%H:%M:%S')"
+    up="$(uptime -p 2>/dev/null || uptime)"
+    users="$(who | wc -l)"
+    load1="$(awk '{print $1}' /proc/loadavg)"
+    load5="$(awk '{print $2}' /proc/loadavg)"
+    printf "  %sCurrent-time%s    :  %s%s%s\n"   "$DIM" "$RST" "$C" "$now"   "$RST"
+    printf "  %sSystem-uptime%s   :  %s%s%s\n"   "$DIM" "$RST" "$C" "$up"    "$RST"
+    printf "  %sNumber-of-users%s :  %s%s%s\n"   "$DIM" "$RST" "$C" "$users" "$RST"
+    printf "  %sLoad-average%s\n"                "$DIM" "$RST"
+    printf "    %s1-min%s          :  %s%s%s\n"  "$DIM" "$RST" "$C" "$load1" "$RST"
+    printf "    %s5-min%s          :  %s%s%s\n"  "$DIM" "$RST" "$C" "$load5" "$RST"
+    printf "\n"
+
+    teardown_scroll
+}
+
+do_headers() {
+    setup_scroll
+    heading "HTTP Security Headers"
+    need curl || { teardown_scroll; return 1; }
+    local u; u="$(ask "URL" "$DEFAULT_HOST")"
+    printf "\n"
+    local hdrs; hdrs="$(curl -sI --max-time 10 "$u" 2>/dev/null)"
+    printf "%s\n" "$hdrs" | while IFS= read -r line; do
+        local ll="${line,,}"
+        case "$ll" in
+            *strict-transport*)   printf "  %s%s%s\n" "$G"   "$line" "$RST" ;;
+            *content-security-p*) printf "  %s%s%s\n" "$G"   "$line" "$RST" ;;
+            *x-frame-options*)    printf "  %s%s%s\n" "$G"   "$line" "$RST" ;;
+            *x-content-type*)     printf "  %s%s%s\n" "$G"   "$line" "$RST" ;;
+            *permissions-policy*) printf "  %s%s%s\n" "$G"   "$line" "$RST" ;;
+            *server:*)            printf "  %s%s%s\n" "$Y"   "$line" "$RST" ;;
+            *)                    printf "  %s%s%s\n" "$DIM" "$line" "$RST" ;;
+        esac
+    done
+    printf "\n"
+    local missing=()
+    printf "%s\n" "$hdrs" | grep -qi "Strict-Transport-Security" || missing+=("HSTS")
+    printf "%s\n" "$hdrs" | grep -qi "Content-Security-Policy"   || missing+=("CSP")
+    printf "%s\n" "$hdrs" | grep -qi "X-Frame-Options"           || missing+=("X-Frame-Options")
+    printf "%s\n" "$hdrs" | grep -qi "X-Content-Type-Options"    || missing+=("X-Content-Type-Options")
+    printf "%s\n" "$hdrs" | grep -qi "Permissions-Policy"        || missing+=("Permissions-Policy")
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        warn "Missing headers:"
+        for hh in "${missing[@]}"; do
+            printf "  %s  x  %s%s\n" "$R" "$hh" "$RST"
+        done
+    else
+        ok "All key security headers present"
+    fi
+    teardown_scroll
+}
+
+do_shodan() {
+    setup_scroll
+    heading "Shodan Host Lookup"
+    if [[ -z "${SHODAN_API_KEY:-}" ]]; then
+        warn "SHODAN_API_KEY not set in .env"
+        teardown_scroll; return 1
+    fi
+    need curl || { teardown_scroll; return 1; }
+    local h; h="$(ask "IP address" "")"
+    printf "\n"
+    curl -s "https://api.shodan.io/shodan/host/${h}?key=${SHODAN_API_KEY}" \
+        | python3 -m json.tool 2>/dev/null \
+        | head -60 \
+        | while IFS= read -r line; do
+            printf "  %s%s%s\n" "$C" "$line" "$RST"
+        done
+    teardown_scroll
+}
+
+do_config() {
+    setup_scroll
+    heading "Configuration"
+    printf "  %sFile: %s%s\n\n" "$DIM" "$ENV_FILE" "$RST"
+    printf "  %-30s %s\n" "KEY" "VALUE"
+    sep
+    printf "  %-30s %s\n" "DEFAULT_HOST"          "$DEFAULT_HOST"
+    printf "  %-30s %s\n" "DEFAULT_WIN11_IP"       "$DEFAULT_WIN11_IP"
+    printf "  %-30s %s\n" "DEFAULT_NETWORK_RANGE"  "$DEFAULT_NETWORK_RANGE"
+    printf "  %-30s %s\n" "NUCLEI_OUTPUT_DIR"      "$NUCLEI_OUTPUT_DIR"
+    printf "  %-30s %s\n" "NUCLEI_RATE_LIMIT"      "$NUCLEI_RATE_LIMIT"
+    printf "  %-30s %s\n" "NUCLEI_CONCURRENCY"     "$NUCLEI_CONCURRENCY"
+    local sk="${SHODAN_API_KEY:-}"
+    [[ -n "$sk" ]] && sk="${sk:0:4}****" || sk="(not set)"
+    printf "  %-30s %s\n" "SHODAN_API_KEY"         "$sk"
+    printf "\n"
+    teardown_scroll
+}
+
+do_help() {
+    printf "\n  %ssecchk v0.2%s -- Security Check Tool\n\n" "$W" "$RST"
+    printf "  %sUSAGE%s\n" "$W" "$RST"
+    printf "    ./secchk              Interactive TUI menu\n"
+    printf "    ./secchk [flag]       Run directly\n\n"
+    printf "  %sNUCLEI FLAGS%s\n" "$W" "$RST"
+    printf "    %s--scan-cve%s    Basic CVE scan\n"            "$C" "$RST"
+    printf "    %s--scan-crit%s   Critical/high severity\n"    "$C" "$RST"
+    printf "    %s--scan-range%s  Network range scan\n"        "$C" "$RST"
+    printf "    %s--scan-infra%s  Linux/infra full scan\n"     "$C" "$RST"
+    printf "    %s--scan-win11%s  Win11 SMB/RPC/web\n"         "$C" "$RST"
+    printf "    %s--scan-audit%s  Full audit to file\n\n"      "$C" "$RST"
+    printf "  %sPORT SCAN FLAGS%s\n" "$W" "$RST"
+    printf "    %s--nc-common%s   Common ports (netcat)\n"     "$C" "$RST"
+    printf "    %s--nc-range%s    Custom port range\n"         "$C" "$RST"
+    printf "    %s--nc-banner%s   Banner grab\n\n"             "$C" "$RST"
+    printf "  %sTOOL FLAGS%s\n" "$W" "$RST"
+    printf "    %s--whois%s       WHOIS lookup\n"              "$C" "$RST"
+    printf "    %s--dns%s         DNS enumeration\n"           "$C" "$RST"
+    printf "    %s--ssl%s         SSL/TLS check\n"             "$C" "$RST"
+    printf "    %s--headers%s     HTTP security headers\n"     "$C" "$RST"
+    printf "    %s--shodan%s      Shodan lookup\n"             "$C" "$RST"
+    printf "    %s--config%s      Show configuration\n"        "$C" "$RST"
+    printf "    %s-h, --help%s    This help\n\n"               "$C" "$RST"
+    printf "  %sEXAMPLES%s\n" "$W" "$RST"
+    printf "    ./secchk\n"
+    printf "    ./secchk --scan-cve\n"
+    printf "    ./secchk --nc-common\n"
+    printf "    ./secchk --headers\n\n"
+}
+
+# ---------------------------------------------------------------------------
+# Interactive menu
+# ---------------------------------------------------------------------------
+main_menu() {
+    while true; do
+        print_banner
+        printf "  %s-- NUCLEI SCANS ----------------------------------------%s\n" "$W" "$RST"
+        printf "  %s 1%s  Basic CVE scan\n"                  "$C" "$RST"
+        printf "  %s 2%s  Critical / high severity only\n"   "$C" "$RST"
+        printf "  %s 3%s  Network range scan (targets.txt)\n" "$C" "$RST"
+        printf "  %s 4%s  Linux / infrastructure full scan\n" "$C" "$RST"
+        printf "  %s 5%s  Windows 11 (SMB / RPC / web)\n"    "$C" "$RST"
+        printf "  %s 6%s  Full audit to output file\n\n"     "$C" "$RST"
+        printf "  %s-- PORT SCANNING (netcat) -------------------------------%s\n" "$W" "$RST"
+        printf "  %s 7%s  Common ports\n"                    "$C" "$RST"
+        printf "  %s 8%s  Custom port range\n"               "$C" "$RST"
+        printf "  %s 9%s  Banner grab\n\n"                   "$C" "$RST"
+        printf "  %s-- ADDITIONAL TOOLS -------------------------------------%s\n" "$W" "$RST"
+        printf "  %s10%s  WHOIS lookup\n"                    "$C" "$RST"
+        printf "  %s11%s  DNS enumeration\n"                 "$C" "$RST"
+        printf "  %s12%s  SSL/TLS certificate check\n"       "$C" "$RST"
+        printf "  %s13%s  HTTP security headers\n"           "$C" "$RST"
+        printf "  %s14%s  Shodan host lookup\n\n"            "$C" "$RST"
+        printf "  %s-- UTILITY ----------------------------------------------%s\n" "$W" "$RST"
+        printf "  %s15%s  Configuration\n"                   "$C" "$RST"
+        printf "  %s16%s  System information\n" "$C" "$RST" 
+        printf "  %s h%s  Help\n"                            "$C" "$RST"
+        printf "  %s q%s  Quit\n\n"                          "$C" "$RST"
+        printf "  Select: "
+        read -r choice
+        case "$choice" in
+            1)  do_scan1 ;;     2)  do_scan2 ;;     3)  do_scan3 ;;
+            4)  do_scan4 ;;     5)  do_scan5 ;;     6)  do_scan6 ;;
+            7)  do_nc_common ;; 8)  do_nc_range ;;  9)  do_nc_banner ;;
+            10) do_whois ;;     11) do_dns ;;        12) do_ssl ;;
+            13) do_headers ;;   14) do_shodan ;;     15) do_config ;;
+            h|H|help) do_help; pause ;;
+            q|Q|quit|exit) printf "\n  %sGoodbye.%s\n\n" "$C" "$RST"; exit 0 ;;
+            *) warn "Unknown option: $choice"; sleep 1 ;;
+        esac
+    done
+}
+
+# ---------------------------------------------------------------------------
+# Entry point — flag or interactive
+# ---------------------------------------------------------------------------
+case "${1:-}" in
+    --scan-cve)   print_banner; do_scan1 ;;
+    --scan-crit)  print_banner; do_scan2 ;;
+    --scan-range) print_banner; do_scan3 ;;
+    --scan-infra) print_banner; do_scan4 ;;
+    --scan-win11) print_banner; do_scan5 ;;
+    --scan-audit) print_banner; do_scan6 ;;
+    --nc-common)  print_banner; do_nc_common ;;
+    --nc-range)   print_banner; do_nc_range ;;
+    --nc-banner)  print_banner; do_nc_banner ;;
+    --whois)      print_banner; do_whois ;;
+    --dns)        print_banner; do_dns ;;
+    --ssl)        print_banner; do_ssl ;;
+    --headers)    print_banner; do_headers ;;
+    --shodan)     print_banner; do_shodan ;;
+    --config)     print_banner; do_config ;;
+    --sysinfo) print_banner; do_sysinfo ;;
+    -h|--help)    do_help ;;
+    "")           main_menu ;;
+    *) printf "  Unknown option: %s\n  Run: ./secchk --help\n" "$1"; exit 1 ;;
+esac

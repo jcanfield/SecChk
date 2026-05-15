@@ -1,0 +1,9 @@
+~
+results/
+.env
+.env.local
+env
+assets/
+*.checksum
+*nuclei*
+*templates-latest*
