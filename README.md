@@ -263,6 +263,55 @@ printf "  %s16%s  nmap service scan\n" "$C" "$RST"
 ```
 ```
 
+### Future menu structure based on possible apps/tools
+```
+secchk
+├── [1] VULNERABILITY SCANNING (nuclei)
+│   ├── Basic CVE scan
+│   ├── Critical/high severity
+│   ├── Network range scan
+│   ├── Linux/infra full scan
+│   ├── Windows 11 (SMB/RPC/web)
+│   └── Full audit to file
+│
+├── [2] NETWORK TOOLS
+│   ├── Port scan — common ports (nc)
+│   ├── Port scan — custom range (nc)
+│   ├── Banner grab (nc)
+│   ├── DNS enumeration (dig)
+│   ├── WHOIS lookup
+│   ├── Ping sweep (fping/ping)
+│   ├── Traceroute
+│   └── SSL/TLS check (openssl)
+│
+├── [3] WEB / HTTP TOOLS
+│   ├── HTTP security headers (curl)
+│   ├── Nikto web server scan
+│   ├── Directory brute-force (gobuster/ffuf)
+│   └── Shodan lookup
+│
+├── [4] DOCKER SECURITY
+│   ├── Scan image for CVEs (trivy)
+│   ├── Scan running containers (trivy)
+│   ├── Scan local project/Dockerfile (trivy)
+│   ├── Docker bench security (docker-bench-security)
+│   ├── List images + check for outdated
+│   └── Inspect container network exposure
+│
+├── [5] SYSTEM / BLUE TEAM
+│   ├── Open ports on THIS host (ss/netstat)
+│   ├── Active connections
+│   ├── Failed SSH logins (auth.log)
+│   ├── Listening services
+│   ├── Check for SUID binaries
+│   └── System information (sysinfo)
+│
+└── [6] UTILITY
+    ├── Configuration
+    ├── View scan results
+    └── Help / Quit
+```
+
 
 ## 🤝 Contributing
 

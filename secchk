@@ -137,15 +137,13 @@ run_nuclei() {
     local ts outfile
     ts="$(date +%Y%m%d-%H%M%S)"
     outfile="${NUCLEI_OUTPUT_DIR}/${ts}-nuclei.txt"
+
     printf "  %s» nuclei %s -rate-limit %s -c %s%s\n\n" \
         "$DIM" "$*" "$NUCLEI_RATE_LIMIT" "$NUCLEI_CONCURRENCY" "$RST"
 
-    # -v = verbose, -stats = live stats bar, tee writes to screen AND file
     nuclei "$@" \
         -rate-limit "$NUCLEI_RATE_LIMIT" \
         -c          "$NUCLEI_CONCURRENCY" \
-        -v \
-        -stats \
         2>&1 | tee "$outfile" | while IFS= read -r line; do
         case "${line,,}" in
             *"[critical]"*) printf "  %s%s%s\n" "$R"   "$line" "$RST" ;;
@@ -171,7 +169,7 @@ do_scan1() {
     heading "Scan 1 — Basic CVE Scan"
     local h; h="$(ask "Target host" "$DEFAULT_HOST")"
     info "Running CVE templates against $h"
-    run_nuclei -u "$h" -t cves/
+    run_nuclei -u "$h" -tags cve
     teardown_scroll
 }
 
@@ -180,7 +178,7 @@ do_scan2() {
     heading "Scan 2 — Critical / High Severity"
     local h; h="$(ask "Target host" "$DEFAULT_HOST")"
     info "Scanning $h — severity: critical, high"
-    run_nuclei -u "$h" -severity critical,high
+    run_nuclei -u "$h" -tags cve -severity critical,high
     teardown_scroll
 }
 
@@ -197,7 +195,7 @@ do_scan3() {
             ok "Wrote $(wc -l < "$f") hosts to $f"
         fi
     fi
-    run_nuclei -l "$f" -t cves/ -severity critical,high,medium
+    run_nuclei -l "$f" -tags cve -severity critical,high,medium
     teardown_scroll
 }
 
@@ -205,8 +203,8 @@ do_scan4() {
     setup_scroll
     heading "Scan 4 — Linux / Infrastructure Full Scan"
     local h; h="$(ask "Target host" "$DEFAULT_HOST")"
-    info "Templates: network/ exposures/ misconfiguration/ cves/"
-    run_nuclei -u "$h" -t network/ -t exposures/ -t misconfiguration/ -t cves/
+    info "Tags: network, exposure, misconfig, cve"
+    run_nuclei -u "$h" -tags network,exposure,misconfig,cve
     teardown_scroll
 }
 
@@ -214,8 +212,8 @@ do_scan5() {
     setup_scroll
     heading "Scan 5 — Windows 11 (SMB / RPC / Web)"
     local h; h="$(ask "Win11 IP" "$DEFAULT_WIN11_IP")"
-    info "Templates: network/smb/ cves/ misconfiguration/"
-    run_nuclei -u "$h" -t network/smb/ -t cves/ -t misconfiguration/
+    info "Tags: smb, cve, misconfig"
+    run_nuclei -u "$h" -tags smb,cve,misconfig
     teardown_scroll
 }
 
@@ -230,11 +228,7 @@ do_scan6() {
         printf "%s\n" "$h" > "$f"
         ok "Created $f"
     fi
-    local out="${NUCLEI_OUTPUT_DIR}/audit-$(date +%Y%m%d-%H%M%S).txt"
-    mk_outdir
-    info "Output: $out"
-    run_nuclei -l "$f" -t cves/ -t misconfiguration/ -t default-logins/ \
-        -severity critical,high -o "$out"
+    run_nuclei -l "$f" -tags cve,misconfig,default-login -severity critical,high
     teardown_scroll
 }
 
