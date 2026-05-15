@@ -543,7 +543,7 @@ main_menu() {
         printf "  %s14%s  Shodan host lookup\n\n"            "$C" "$RST"
         printf "  %s-- UTILITY ----------------------------------------------%s\n" "$W" "$RST"
         printf "  %s15%s  Configuration\n"                   "$C" "$RST"
-        printf "  %s16%s  System information\n" "$C" "$RST" 
+        printf "  %s s%s  System information\n" "$C" "$RST" 
         printf "  %s h%s  Help\n"                            "$C" "$RST"
         printf "  %s q%s  Quit\n\n"                          "$C" "$RST"
         printf "  Select: "
@@ -554,6 +554,7 @@ main_menu() {
             7)  do_nc_common ;; 8)  do_nc_range ;;  9)  do_nc_banner ;;
             10) do_whois ;;     11) do_dns ;;        12) do_ssl ;;
             13) do_headers ;;   14) do_shodan ;;     15) do_config ;;
+            s|S|sysinfo) do_sysinfo ;;
             h|H|help) do_help; pause ;;
             q|Q|quit|exit) printf "\n  %sGoodbye.%s\n\n" "$C" "$RST"; exit 0 ;;
             *) warn "Unknown option: $choice"; sleep 1 ;;
