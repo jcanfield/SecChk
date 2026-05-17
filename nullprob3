@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# secchk - Security Check Tool v0.2
+# nullprob3 - NullProb3 Security Tool v0.2a
 # ---------------------------------------------------------------------------
 # Load .env
 # ---------------------------------------------------------------------------
@@ -91,14 +91,14 @@ BANNER_ROWS=14
 
 _draw_banner() {
     printf "%s" "$C"
-    printf "  ███████╗███████╗ ██████╗ ██████╗██╗  ██╗██╗  ██╗\n"
-    printf "  ██╔════╝██╔════╝██╔════╝██╔════╝██║  ██║██║ ██╔╝\n"
-    printf "  ███████╗█████╗  ██║     ██║     ███████║█████╔╝ \n"
-    printf "  ╚════██║██╔══╝  ██║     ██║     ██╔══██║██╔═██╗ \n"
-    printf "  ███████║███████╗╚██████╗╚██████╗██║  ██║██║  ██╗\n"
-    printf "  ╚══════╝╚══════╝ ╚═════╝ ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝\n"
+    printf "  ███╗   ██╗██╗   ██╗██╗     ██╗     ██████╗ ██████╗  ██████╗ ██████╗ ██████╗ \n"
+    printf "  ████╗  ██║██║   ██║██║     ██║     ██╔══██╗██╔══██╗██╔═══██╗██╔══██╗╚════██╗\n"
+    printf "  ██╔██╗ ██║██║   ██║██║     ██║     ██████╔╝██████╔╝██║   ██║██████╔╝ █████╔╝\n"
+    printf "  ██║╚██╗██║██║   ██║██║     ██║     ██╔═══╝ ██╔══██╗██║   ██║██╔══██╗ ╚═══██╗\n"
+    printf "  ██║ ╚████║╚██████╔╝███████╗███████╗██║     ██║  ██║╚██████╔╝██████╔╝██████╔╝\n"
+    printf "  ╚═╝  ╚═══╝ ╚═════╝ ╚══════╝╚══════╝╚═╝     ╚═╝  ╚═╝ ╚═════╝ ╚═════╝ ╚═════╝ \n" 
     printf "%s\n" "$RST"
-    printf "  %sSecurity Check Tool  v0.2%s\n" "$W" "$RST"
+    printf "  %sNullProb3 Security Check Tool  v0.2%s\n" "$W" "$RST"
     printf "  %s────────────────────────────────────────────────%s\n" "$DIM" "$RST"
     printf "  %sHost : %s%s%s\n" "$DIM" "$C" "$DEFAULT_HOST" "$RST"
     printf "  %sWin11: %s%s%s\n" "$DIM" "$C" "$DEFAULT_WIN11_IP" "$RST"
@@ -488,10 +488,10 @@ do_config() {
 }
 
 do_help() {
-    printf "\n  %ssecchk v0.2%s -- Security Check Tool\n\n" "$W" "$RST"
+    printf "\n  %snullprob3 v0.2%s -- Security Check Tool\n\n" "$W" "$RST"
     printf "  %sUSAGE%s\n" "$W" "$RST"
-    printf "    ./secchk              Interactive TUI menu\n"
-    printf "    ./secchk [flag]       Run directly\n\n"
+    printf "    ./nullprob3              Interactive TUI menu\n"
+    printf "    ./nullprob3 [flag]       Run directly\n\n"
     printf "  %sNUCLEI FLAGS%s\n" "$W" "$RST"
     printf "    %s--scan-cve%s    Basic CVE scan\n"            "$C" "$RST"
     printf "    %s--scan-crit%s   Critical/high severity\n"    "$C" "$RST"
@@ -512,10 +512,10 @@ do_help() {
     printf "    %s--config%s      Show configuration\n"        "$C" "$RST"
     printf "    %s-h, --help%s    This help\n\n"               "$C" "$RST"
     printf "  %sEXAMPLES%s\n" "$W" "$RST"
-    printf "    ./secchk\n"
-    printf "    ./secchk --scan-cve\n"
-    printf "    ./secchk --nc-common\n"
-    printf "    ./secchk --headers\n\n"
+    printf "    ./nullprob3\n"
+    printf "    ./nullprob3 --scan-cve\n"
+    printf "    ./nullprob3 --nc-common\n"
+    printf "    ./nullprob3 --headers\n\n"
 }
 
 # ---------------------------------------------------------------------------
@@ -584,5 +584,5 @@ case "${1:-}" in
     --sysinfo) print_banner; do_sysinfo ;;
     -h|--help)    do_help ;;
     "")           main_menu ;;
-    *) printf "  Unknown option: %s\n  Run: ./secchk --help\n" "$1"; exit 1 ;;
+    *) printf "  Unknown option: %s\n  Run: ./nullprob3 --help\n" "$1"; exit 1 ;;
 esac
