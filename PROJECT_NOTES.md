@@ -20,6 +20,21 @@ If you can create the bash script to use both ./NullProb3 --help (-- parameters)
 
 For now, I'll be calling this script NullProb3
 
+## Current thoughts
+
+Use of other apps
+
+```
+fierce/questing 1.6.0-1 all
+  Domain DNS scanner
+
+nikto/questing 1:2.1.5-3.1 all
+  web server security scanner
+
+wapiti/questing 3.2.5+dfsg-1 all
+  web application vulnerability scanner
+```
+
 ## Apps/Tools Roadmap
 ### Future menu structure based on possible apps/tools
 ```
